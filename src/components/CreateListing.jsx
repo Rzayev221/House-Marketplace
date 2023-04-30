@@ -1,19 +1,21 @@
-import React from "react";
 import { useState, useEffect, useRef } from "react";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
-import { useNavigate } from "react-router-dom";
-import Spinner from "./Spinner";
 import {
   getStorage,
   ref,
   uploadBytesResumable,
   getDownloadURL,
 } from "firebase/storage";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase.config";
-import { v4 as uuidv4 } from "uuid";
+import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
+import { v4 as uuidv4 } from "uuid";
+import Spinner from "../components/Spinner";
+
 function CreateListing() {
-  const [geolocationEnabled, seGeolocationEnabled] = useState(false);
+  // eslint-disable-next-line
+  const [geolocationEnabled, setGeolocationEnabled] = useState(false);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     type: "rent",
@@ -30,6 +32,7 @@ function CreateListing() {
     latitude: 0,
     longitude: 0,
   });
+
   const {
     type,
     name,
@@ -45,6 +48,7 @@ function CreateListing() {
     latitude,
     longitude,
   } = formData;
+
   const auth = getAuth();
   const navigate = useNavigate();
   const isMounted = useRef(true);
@@ -53,47 +57,74 @@ function CreateListing() {
     if (isMounted) {
       onAuthStateChanged(auth, (user) => {
         if (user) {
-          setFormData({ ...formData, useRef: user.uid });
+          setFormData({ ...formData, userRef: user.uid });
         } else {
           navigate("/sign-in");
         }
       });
     }
+
     return () => {
       isMounted.current = false;
     };
-    //eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMounted]);
 
   const onSubmit = async (e) => {
     e.preventDefault();
+
     setLoading(true);
-    if (discountedPrice >= regularPrice) {
+
+    if (+discountedPrice >= +regularPrice) {
       setLoading(false);
       toast.error("Discounted price needs to be less than regular price");
       return;
     }
+
     if (images.length > 6) {
       setLoading(false);
       toast.error("Max 6 images");
       return;
     }
+
     let geolocation = {};
     let location;
+
     if (geolocationEnabled) {
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?address=${address}&key=${process.env.REACT_APP_GEOCODE_API_KEY}`
+      );
+
+      const data = await response.json();
+
+      geolocation.lat = data.results[0]?.geometry.location.lat ?? 0;
+      geolocation.lng = data.results[0]?.geometry.location.lng ?? 0;
+
+      location =
+        data.status === "ZERO_RESULTS"
+          ? undefined
+          : data.results[0]?.formatted_address;
+
+      if (location === undefined || location.includes("undefined")) {
+        setLoading(false);
+        toast.error("Please enter a correct address");
+        return;
+      }
     } else {
       geolocation.lat = latitude;
       geolocation.lng = longitude;
-      location = address;
     }
-    //Store images in firebase
+
+    // Store image in firebase
     const storeImage = async (image) => {
       return new Promise((resolve, reject) => {
         const storage = getStorage();
-        const fileName = `${auth.currentUser.uid} - ${image.name}-${uuidv4()}`;
+        const fileName = `${auth.currentUser.uid}-${image.name}-${uuidv4()}`;
 
         const storageRef = ref(storage, "images/" + fileName);
+
         const uploadTask = uploadBytesResumable(storageRef, image);
+
         uploadTask.on(
           "state_changed",
           (snapshot) => {
@@ -115,6 +146,8 @@ function CreateListing() {
             reject(error);
           },
           () => {
+            // Handle successful uploads on complete
+            // For instance, get the download URL: https://firebasestorage.googleapis.com/...
             getDownloadURL(uploadTask.snapshot.ref).then((downloadURL) => {
               resolve(downloadURL);
             });
@@ -122,35 +155,52 @@ function CreateListing() {
         );
       });
     };
-    const imageUrls = await Promise.all(
+
+    const imgUrls = await Promise.all(
       [...images].map((image) => storeImage(image))
     ).catch(() => {
       setLoading(false);
       toast.error("Images not uploaded");
       return;
     });
-    console.log(imageUrls);
+
+    const formDataCopy = {
+      ...formData,
+      imgUrls,
+      geolocation,
+      timestamp: serverTimestamp(),
+    };
+
+    formDataCopy.location = address;
+    delete formDataCopy.images;
+    delete formDataCopy.address;
+    !formDataCopy.offer && delete formDataCopy.discountedPrice;
+
+    const docRef = await addDoc(collection(db, "listings"), formDataCopy);
     setLoading(false);
+    toast.success("Listing saved");
+    navigate(`/category/${formDataCopy.type}/${docRef.id}`);
   };
 
   const onMutate = (e) => {
     let boolean = null;
 
-    if (e.target.value == "true") {
+    if (e.target.value === "true") {
       boolean = true;
     }
-    if (e.target.value == "false") {
+    if (e.target.value === "false") {
       boolean = false;
     }
 
-    //files
+    // Files
     if (e.target.files) {
       setFormData((prevState) => ({
         ...prevState,
         images: e.target.files,
       }));
     }
-    //text/booleans/numbers
+
+    // Text/Booleans/Numbers
     if (!e.target.files) {
       setFormData((prevState) => ({
         ...prevState,
@@ -158,9 +208,11 @@ function CreateListing() {
       }));
     }
   };
+
   if (loading) {
     return <Spinner />;
   }
+
   return (
     <div className="profile">
       <header>
@@ -190,10 +242,11 @@ function CreateListing() {
               Rent
             </button>
           </div>
+
           <label className="formLabel">Name</label>
           <input
-            type="text"
             className="formInputName"
+            type="text"
             id="name"
             value={name}
             onChange={onMutate}
@@ -201,35 +254,37 @@ function CreateListing() {
             minLength="10"
             required
           />
+
           <div className="formRooms flex">
             <div>
               <label className="formLabel">Bedrooms</label>
               <input
-                type="number"
                 className="formInputSmall"
+                type="number"
                 id="bedrooms"
                 value={bedrooms}
                 onChange={onMutate}
-                max="50"
                 min="1"
+                max="50"
                 required
               />
             </div>
             <div>
               <label className="formLabel">Bathrooms</label>
               <input
-                type="number"
                 className="formInputSmall"
+                type="number"
                 id="bathrooms"
                 value={bathrooms}
                 onChange={onMutate}
-                max="50"
                 min="1"
+                max="50"
                 required
               />
             </div>
           </div>
-          <label className="formLabel">Parking Spot</label>
+
+          <label className="formLabel">Parking spot</label>
           <div className="formButtons">
             <button
               className={parking ? "formButtonActive" : "formButton"}
@@ -250,12 +305,11 @@ function CreateListing() {
               id="parking"
               value={false}
               onClick={onMutate}
-              min="1"
-              max="50"
             >
               No
             </button>
           </div>
+
           <label className="formLabel">Furnished</label>
           <div className="formButtons">
             <button
@@ -278,25 +332,27 @@ function CreateListing() {
               value={false}
               onClick={onMutate}
             >
-              Yes
+              No
             </button>
           </div>
+
           <label className="formLabel">Address</label>
           <textarea
-            id="address"
-            type="text"
             className="formInputAddress"
+            type="text"
+            id="address"
             value={address}
             onChange={onMutate}
             required
           />
+
           {!geolocationEnabled && (
             <div className="formLatLng flex">
               <div>
                 <label className="formLabel">Latitude</label>
                 <input
-                  type="number"
                   className="formInputSmall"
+                  type="number"
                   id="latitude"
                   value={latitude}
                   onChange={onMutate}
@@ -306,8 +362,8 @@ function CreateListing() {
               <div>
                 <label className="formLabel">Longitude</label>
                 <input
-                  type="number"
                   className="formInputSmall"
+                  type="number"
                   id="longitude"
                   value={longitude}
                   onChange={onMutate}
@@ -316,6 +372,7 @@ function CreateListing() {
               </div>
             </div>
           )}
+
           <label className="formLabel">Offer</label>
           <div className="formButtons">
             <button
@@ -339,55 +396,54 @@ function CreateListing() {
               No
             </button>
           </div>
+
           <label className="formLabel">Regular Price</label>
           <div className="formPriceDiv">
             <input
-              type="number"
               className="formInputSmall"
+              type="number"
               id="regularPrice"
               value={regularPrice}
               onChange={onMutate}
               min="50"
-              max="7500000"
+              max="750000000"
               required
             />
-            {type === "rent" && <p className="formPriceText"> $ / Month</p>}
+            {type === "rent" && <p className="formPriceText">$ / Month</p>}
           </div>
+
           {offer && (
             <>
               <label className="formLabel">Discounted Price</label>
               <input
-                type="number"
                 className="formInputSmall"
+                type="number"
                 id="discountedPrice"
                 value={discountedPrice}
                 onChange={onMutate}
                 min="50"
-                max="75000000"
+                max="750000000"
                 required={offer}
               />
             </>
           )}
+
           <label className="formLabel">Images</label>
           <p className="imagesInfo">
-            The first image will be the cover (max 6)
+            The first image will be the cover (max 6).
           </p>
           <input
-            type="file"
             className="formInputFile"
+            type="file"
             id="images"
             onChange={onMutate}
             max="6"
-            accept=".jpg, .png, .jpeg"
+            accept=".jpg,.png,.jpeg"
             multiple
             required
           />
-          <button
-            className="primaryButton createListingButton"
-            type="submit"
-            onSubmit={onSubmit}
-          >
-            Create listing
+          <button type="submit" className="primaryButton createListingButton">
+            Create Listing
           </button>
         </form>
       </main>
