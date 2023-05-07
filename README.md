@@ -1,3 +1,8 @@
+#Code was deployed to Versel on https://house-marketplace-i6dufhej6-rzayev221.vercel.app/
+
+#Feel free to test it out and give feedback
+
+
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
