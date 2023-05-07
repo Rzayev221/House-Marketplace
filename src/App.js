@@ -8,7 +8,7 @@ import PrivateRoute from "./components/PrivateRoute";
 import SignUp from "./pages/SignUp";
 import Navbar from "./components/Navbar";
 import Category from "./pages/Category";
-import CreateListing from "./components/CreateListing";
+import CreateListing from "./pages/CreateListing";
 import { ToastContainer } from "react-toastify";
 import Listing from "./pages/Listing";
 import Contact from "./pages/Contact";
